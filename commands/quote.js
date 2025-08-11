@@ -20,6 +20,9 @@ module.exports = {
             option.setName('max_length')
                 .setDescription('Maximum quote length in characters')),
     async execute(interaction) {
+        // Acknowledge the interaction immediately to avoid timeout
+        await interaction.deferReply();
+
         try {
             // Get command options
             const count = interaction.options.getInteger('count') || 1;
@@ -40,23 +43,65 @@ module.exports = {
 
             // Fetch quotes
             const response = await axios.get(url);
-            const quotes = response.data;
+            let quotes = response.data;
 
-            if (!quotes || quotes.length === 0) {
-                return interaction.reply('No quotes found matching your criteria.');
+            // Handle single quote response (API returns object for single quote, array for multiple)
+            if (!Array.isArray(quotes)) {
+                quotes = [quotes];
             }
 
-            // Format quotes for display
-            const quoteList = quotes.map(q => 
-                `"${q.content}"\n- ${q.author}\n` + 
-                (q.tags ? `Tags: ${q.tags.join(', ')}\n` : '')
-            ).join('\n');
+            if (!quotes || quotes.length === 0) {
+                return interaction.editReply('No quotes found matching your criteria. Try different tags or remove filters.');
+            }
 
-            await interaction.reply(`Here are your quotes:\n\n${quoteList}`);
+            // Format quotes for display with better formatting
+            const quoteList = quotes.map((q, index) => {
+                let quoteText = `**${index + 1}.** "${q.content}"\n`;
+                quoteText += `   — *${q.author}*\n`;
+                if (q.tags && q.tags.length > 0) {
+                    quoteText += `   🏷️ Tags: ${q.tags.join(', ')}\n`;
+                }
+                if (q.length) {
+                    quoteText += `   📏 Length: ${q.length} characters\n`;
+                }
+                return quoteText;
+            }).join('\n');
+
+            // Create embed for better display
+            const embed = {
+                color: 0x0099ff,
+                title: count === 1 ? '💭 Random Quote' : '💭 Random Quotes',
+                description: quoteList,
+                footer: {
+                    text: 'Provided by Quotable.io'
+                },
+                timestamp: new Date()
+            };
+
+            await interaction.editReply({ embeds: [embed] });
 
         } catch (error) {
             console.error('Quote error:', error);
-            interaction.reply('Failed to fetch quotes. Please try again later.');
+            
+            // Provide more specific error messages
+            let errorMessage = 'Failed to fetch quotes. Please try again later.';
+            
+            if (error.response) {
+                // API responded with error status
+                if (error.response.status === 404) {
+                    errorMessage = 'No quotes found matching your criteria. Try different tags or remove filters.';
+                } else if (error.response.status === 429) {
+                    errorMessage = 'Too many requests! Please wait a moment and try again.';
+                } else if (error.response.status >= 500) {
+                    errorMessage = 'The quote service is currently unavailable. Please try again later.';
+                }
+            } else if (error.code === 'ECONNABORTED') {
+                errorMessage = 'Request timed out. Please try again.';
+            } else if (error.code === 'ENOTFOUND') {
+                errorMessage = 'Unable to connect to the quote service. Please check your internet connection.';
+            }
+
+            await interaction.editReply(errorMessage);
         }
     },
 };
